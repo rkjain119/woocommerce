@@ -168,6 +168,7 @@ class WC_AJAX {
 			'shipping_classes_save_changes',
 			'toggle_gateway_enabled',
 			'order_add_meta',
+			'order_delete_meta',
 		);
 
 		foreach ( $ajax_events as $ajax_event ) {
@@ -3123,23 +3124,11 @@ class WC_AJAX {
 		wp_die();
 	}
 
-	/**
-	 * Reimplementation of WP core's `wp_ajax_add_meta` method to support order custom meta updates with custom tables.
-	 */
-	public static function order_add_meta() {
+	private static function verify_order_edit_permission_for_ajax() {
 		$order_id = (int) $_POST['order_id'] ?? 0;
 
-		if ( ! current_user_can( 'manage_woocommerce' ) || ! current_user_can( 'edit_shop_orders' ) ) {
+		if ( ! current_user_can( 'manage_woocommerce' ) || ! current_user_can( 'edit_others_shop_orders' ) ) {
 			wp_send_json_error( 'missing_capabilities' );
-			wp_die();
-		}
-
-		if ( isset( $_POST['metakeyselect'] ) && '#NONE#' === $_POST['metakeyselect'] && empty( $_POST['metakeyinput'] ) ) {
-			wp_die( 1 );
-		}
-
-		if ( ! check_ajax_referer( 'add-meta', '_ajax_nonce-add-meta' ) ) {
-			wp_send_json_error( 'invalid_nonce' );
 			wp_die();
 		}
 
@@ -3148,6 +3137,24 @@ class WC_AJAX {
 			wp_send_json_error( 'invalid_order_id' );
 			wp_die();
 		}
+		return $order;
+	}
+
+	/**
+	 * Reimplementation of WP core's `wp_ajax_add_meta` method to support order custom meta updates with custom tables.
+	 */
+	public static function order_add_meta() {
+
+		$order = self::verify_order_edit_permission_for_ajax();
+
+		if ( ! check_ajax_referer( 'add-meta', '_ajax_nonce-add-meta' ) ) {
+			wp_send_json_error( 'invalid_nonce' );
+			wp_die();
+		}
+
+		if ( isset( $_POST['metakeyselect'] ) && '#NONE#' === $_POST['metakeyselect'] && empty( $_POST['metakeyinput'] ) ) {
+			wp_die( 1 );
+		}
 
 		$order_data_store = WC_Data_Store::load( 'order' );
 		$count            = 0;
@@ -3155,6 +3162,10 @@ class WC_AJAX {
 		if ( isset( $_POST['metakeyinput'] ) ) { // add meta.
 			$meta_key   = sanitize_text_field( wp_unslash( $_POST['metakeyinput'] ) );
 			$meta_value = sanitize_text_field( wp_unslash( $_POST['metavalue'] ?? '' ) );
+			if ( is_protected_meta( $meta_key ) ) {
+				wp_send_json_error( 'protected_meta' );
+				wp_die();
+			}
 			$meta_id    = $order_data_store->add_meta(
 				$order,
 				new WC_Meta_Data(
@@ -3195,7 +3206,10 @@ class WC_AJAX {
 			}
 			$key   = $meta[ $mid ]['key'];
 			$value = $meta[ $mid ]['value'];
-
+			if ( is_protected_meta( $key ) ) {
+				wp_send_json_error( 'protected_meta' );
+				wp_die();
+			}
 			if ( '' === trim( $key ) ) {
 				wp_send_json_error( 'invalid_meta_key' );
 				wp_die();
@@ -3227,6 +3241,29 @@ class WC_AJAX {
 			);
 			$response->send();
 		}
+	}
+
+	public static function order_delete_meta() {
+		$meta_id = (int) $_POST['meta_id'] ?? 0;
+		if ( ! $meta_id ) {
+			wp_send_json_error( 'invalid_meta_id' );
+			wp_die();
+		}
+		check_ajax_referer( "delete-meta_$meta_id" );
+
+		$order = self::verify_order_edit_permission_for_ajax();
+		$meta_to_delete = wp_list_filter( $order->get_meta_data(), array( 'id' => $meta_id ) );
+
+		if ( empty( $meta_to_delete ) ) {
+			wp_send_json_error( 'invalid_meta_id' );
+			wp_die();
+		}
+
+		$order->delete_meta_data_by_mid( $meta_id );
+		if ( $order->save() ) {
+			wp_die( 1 );
+		}
+		wp_die( 0 );
 	}
 }
 

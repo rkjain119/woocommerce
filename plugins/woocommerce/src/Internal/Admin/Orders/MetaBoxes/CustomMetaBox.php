@@ -100,4 +100,21 @@ class CustomMetaBox {
 		return $keys;
 	}
 
+	public function save( int $order_id, \WC_Order $order ) {
+		// handle meta delete.
+		if ( empty( $_POST['deletemeta'] ) ) {
+			return;
+		}
+
+		$delete_meta_id = sanitize_text_field( wp_unslash( key ( $_POST['deletemeta'] ?? array() ) ) );
+		$delete_meta_object = wp_list_filter( $order->get_meta_data(), array( 'id' => $delete_meta_id ) );
+
+		if ( empty( $delete_meta_object ) ) {
+			return;
+		}
+
+		$order->delete_meta_data_by_mid( $delete_meta_id );
+		$order->save();
+	}
+
 }
